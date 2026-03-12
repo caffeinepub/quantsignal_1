@@ -2,13 +2,14 @@ import { Progress } from "@/components/ui/progress";
 import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
-import type { Ativo } from "../backend.d";
+import type { Ativo, Padrao } from "../backend.d";
 
 interface Props {
   ativos: Ativo[];
+  padroes: Padrao[];
 }
 
-export default function PotencialTab({ ativos }: Props) {
+export default function PotencialTab({ ativos, padroes }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   if (ativos.length === 0) {
@@ -49,85 +50,106 @@ export default function PotencialTab({ ativos }: Props) {
       className="space-y-2"
       data-ocid="quantsignal.potencial.list"
     >
-      {ativos.map((a, i) => (
-        <motion.div
-          key={a.symbol}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: i * 0.04 }}
-          className="rounded-lg border border-border bg-card overflow-hidden"
-          data-ocid={`quantsignal.potencial.item.${i + 1}`}
-        >
-          <button
-            type="button"
-            className="w-full px-4 py-3 flex items-center gap-4 hover:bg-accent/20 transition-colors text-left"
-            onClick={() => setExpanded(expanded === a.symbol ? null : a.symbol)}
+      {ativos.map((a, i) => {
+        const padrao = padroes.find((p) => p.symbol === a.symbol);
+        return (
+          <motion.div
+            key={a.symbol}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.04 }}
+            className="rounded-lg border border-border bg-card overflow-hidden"
+            data-ocid={`quantsignal.potencial.item.${i + 1}`}
           >
-            <span className="text-muted-foreground/50 font-mono text-xs w-6 shrink-0">
-              {i + 1}
-            </span>
+            <button
+              type="button"
+              className="w-full px-4 py-3 flex items-center gap-4 hover:bg-accent/20 transition-colors text-left"
+              onClick={() =>
+                setExpanded(expanded === a.symbol ? null : a.symbol)
+              }
+            >
+              <span className="text-muted-foreground/50 font-mono text-xs w-6 shrink-0">
+                {i + 1}
+              </span>
 
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1.5">
-                <span className="font-mono font-semibold text-sm text-foreground">
-                  {a.symbol.replace("USDT", "")}
-                  <span className="text-muted-foreground/50 text-xs">
-                    /USDT
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="font-mono font-semibold text-sm text-foreground">
+                    {a.symbol.replace("USDT", "")}
+                    <span className="text-muted-foreground/50 text-xs">
+                      /USDT
+                    </span>
                   </span>
-                </span>
-                <span
-                  className={`text-xs font-mono ${
-                    a.variacao >= 0
-                      ? "text-[oklch(0.65_0.22_145)]"
-                      : "text-destructive"
-                  }`}
-                >
-                  {a.variacao >= 0 ? "+" : ""}
-                  {a.variacao.toFixed(2)}%
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Progress
-                  value={Math.min(a.score, 100)}
-                  className="h-1.5 flex-1 bg-muted"
-                />
-                <span className="text-xs font-mono font-bold text-primary shrink-0 w-12 text-right">
-                  {a.score.toFixed(1)}
-                </span>
-              </div>
-            </div>
-
-            <ChevronDown
-              className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${
-                expanded === a.symbol ? "rotate-180" : ""
-              }`}
-            />
-          </button>
-
-          <AnimatePresence>
-            {expanded === a.symbol && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="border-t border-border overflow-hidden"
-              >
-                <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-5 gap-3 bg-muted/20">
-                  <IndicatorCell label="Volatilidade" value="—" />
-                  <IndicatorCell
-                    label="Volume"
-                    value={formatVolume(a.volume)}
-                  />
-                  <IndicatorCell label="Dist. MA" value="—" />
-                  <IndicatorCell label="Compressão" value="—" />
-                  <IndicatorCell label="Aceleração" value="—" />
+                  <span
+                    className={`text-xs font-mono ${
+                      a.variacao >= 0
+                        ? "text-[oklch(0.65_0.22_145)]"
+                        : "text-destructive"
+                    }`}
+                  >
+                    {a.variacao >= 0 ? "+" : ""}
+                    {a.variacao.toFixed(2)}%
+                  </span>
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
-      ))}
+                <div className="flex items-center gap-2">
+                  <Progress
+                    value={Math.min(a.score, 100)}
+                    className="h-1.5 flex-1 bg-muted"
+                  />
+                  <span className="text-xs font-mono font-bold text-primary shrink-0 w-12 text-right">
+                    {a.score.toFixed(1)}
+                  </span>
+                </div>
+              </div>
+
+              <ChevronDown
+                className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${
+                  expanded === a.symbol ? "rotate-180" : ""
+                }`}
+              />
+            </button>
+
+            <AnimatePresence>
+              {expanded === a.symbol && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="border-t border-border overflow-hidden"
+                >
+                  <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-5 gap-3 bg-muted/20">
+                    <IndicatorCell
+                      label="Volatilidade"
+                      value={
+                        padrao ? `${padrao.volatilidade.toFixed(2)}%` : "—"
+                      }
+                    />
+                    <IndicatorCell
+                      label="Volume"
+                      value={formatVolume(a.volume)}
+                    />
+                    <IndicatorCell
+                      label="Dist. MA"
+                      value={
+                        padrao ? `${padrao.distMediaMovel.toFixed(2)}%` : "—"
+                      }
+                    />
+                    <IndicatorCell
+                      label="Compressão"
+                      value={padrao ? padrao.compressao.toFixed(2) : "—"}
+                    />
+                    <IndicatorCell
+                      label="Aceleração"
+                      value={padrao ? padrao.aceleracao.toFixed(2) : "—"}
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        );
+      })}
     </motion.div>
   );
 }

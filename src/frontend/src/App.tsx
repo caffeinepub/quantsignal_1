@@ -304,7 +304,7 @@ export default function App() {
           </TabsContent>
 
           <TabsContent value="potencial">
-            <PotencialTab ativos={potencial} />
+            <PotencialTab ativos={potencial} padroes={padroes} />
           </TabsContent>
 
           <TabsContent value="padroes">
