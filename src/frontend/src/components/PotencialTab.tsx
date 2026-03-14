@@ -7,9 +7,123 @@ import type { Ativo, Padrao } from "../backend.d";
 interface Props {
   ativos: Ativo[];
   padroes: Padrao[];
+  maCrossMap: Record<string, number>;
 }
 
-export default function PotencialTab({ ativos, padroes }: Props) {
+function clamp(val: number, min: number, max: number): number {
+  return Math.min(Math.max(val, min), max);
+}
+
+function formatPrice(n: number): string {
+  return n >= 1 ? n.toFixed(4) : n.toFixed(6);
+}
+
+interface NiveisTrade {
+  entrada: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  riscoPct: string;
+  rr1: number;
+}
+
+function calcularNiveisTrade(
+  preco: number,
+  padrao: Padrao | undefined,
+): NiveisTrade | null {
+  if (!padrao) return null;
+  const { volatilidade, distMediaMovel } = padrao;
+  const entrada = preco;
+  const stopLoss = entrada * (1 - clamp(volatilidade * 1.5, 1.0, 5.0) / 100);
+  const tp1 = entrada * (1 + clamp(volatilidade * 1.5, 1.5, 4.0) / 100);
+  const tp2 =
+    entrada * (1 + clamp(distMediaMovel + volatilidade * 2, 3.0, 10.0) / 100);
+  const tp3 =
+    entrada *
+    (1 + clamp(distMediaMovel * 1.5 + volatilidade * 3, 6.0, 20.0) / 100);
+  const riscoPct = `${(((entrada - stopLoss) / entrada) * 100).toFixed(2)}%`;
+  const rr1 = (tp1 - entrada) / (entrada - stopLoss);
+  return { entrada, stopLoss, tp1, tp2, tp3, riscoPct, rr1 };
+}
+
+function gerarAnalise(
+  padrao: Padrao,
+  score: number,
+  maCrossCount: number | undefined,
+): string[] {
+  const { compressao, aceleracao, distMediaMovel, volatilidade } = padrao;
+  const linhas: string[] = [];
+
+  // MA Cross signal
+  if (maCrossCount === 3) {
+    linhas.push(
+      "Cruzamento MA20/MA50 acima de MA180 em todos os timeframes — sinal de entrada forte.",
+    );
+  } else if (maCrossCount === 2) {
+    linhas.push(
+      "Cruzamento parcial das médias móveis — tendência se formando, aguardar confirmação.",
+    );
+  } else if (maCrossCount === 1) {
+    linhas.push(
+      "Início de cruzamento detectado — observar alinhamento completo.",
+    );
+  }
+
+  if (compressao > 1.5) {
+    linhas.push(
+      "Compressão de volatilidade elevada — possível movimento explosivo iminente.",
+    );
+  } else if (compressao < 0.8) {
+    linhas.push(
+      "Volatilidade expandida — ativo em movimento ativo, cautela com entradas tardias.",
+    );
+  }
+
+  if (aceleracao > 1.2) {
+    linhas.push(
+      "Aceleração de volume positiva — momentum institucional detectado.",
+    );
+  } else if (aceleracao < 0.8) {
+    linhas.push("Volume desacelerando — aguardar confirmação de novo impulso.");
+  }
+
+  if (distMediaMovel > 3) {
+    linhas.push(
+      `Ativo ${distMediaMovel.toFixed(1)}% acima da média móvel — proximidade de resistência dinâmica.`,
+    );
+  } else if (distMediaMovel < -3) {
+    linhas.push(
+      `Ativo ${Math.abs(distMediaMovel).toFixed(1)}% abaixo da média móvel — suporte potencial próximo.`,
+    );
+  } else {
+    linhas.push("Preço próximo da média móvel — zona de decisão técnica.");
+  }
+
+  if (volatilidade > 4) {
+    linhas.push(
+      "Alta volatilidade aumenta o potencial de ganho e o risco simultaneamente.",
+    );
+  }
+
+  if (score >= 70) {
+    linhas.push(
+      "Score elevado indica forte similaridade com padrões históricos de rali.",
+    );
+  } else if (score >= 40) {
+    linhas.push(
+      "Score moderado — monitorar confirmações adicionais antes de entrar.",
+    );
+  } else {
+    linhas.push(
+      "Score baixo — padrão ainda em formação, observar desenvolvimento.",
+    );
+  }
+
+  return linhas;
+}
+
+export default function PotencialTab({ ativos, padroes, maCrossMap }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   if (ativos.length === 0) {
@@ -52,6 +166,12 @@ export default function PotencialTab({ ativos, padroes }: Props) {
     >
       {ativos.map((a, i) => {
         const padrao = padroes.find((p) => p.symbol === a.symbol);
+        const niveis = calcularNiveisTrade(a.preco, padrao);
+        const maCrossCount = maCrossMap[a.symbol];
+        const analise = padrao
+          ? gerarAnalise(padrao, a.score, maCrossCount)
+          : [];
+
         return (
           <motion.div
             key={a.symbol}
@@ -90,6 +210,11 @@ export default function PotencialTab({ ativos, padroes }: Props) {
                     {a.variacao >= 0 ? "+" : ""}
                     {a.variacao.toFixed(2)}%
                   </span>
+                  {maCrossCount !== undefined && maCrossCount > 0 && (
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-primary/15 text-primary border border-primary/25">
+                      MA {maCrossCount}/3
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <Progress
@@ -118,7 +243,8 @@ export default function PotencialTab({ ativos, padroes }: Props) {
                   transition={{ duration: 0.2 }}
                   className="border-t border-border overflow-hidden"
                 >
-                  <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-5 gap-3 bg-muted/20">
+                  {/* Indicator grid */}
+                  <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-6 gap-3 bg-muted/20">
                     <IndicatorCell
                       label="Volatilidade"
                       value={
@@ -143,7 +269,86 @@ export default function PotencialTab({ ativos, padroes }: Props) {
                       label="Aceleração"
                       value={padrao ? padrao.aceleracao.toFixed(2) : "—"}
                     />
+                    <IndicatorCell
+                      label="MA Cross"
+                      value={
+                        maCrossCount !== undefined
+                          ? `${maCrossCount}/3 TFs`
+                          : "—"
+                      }
+                    />
                   </div>
+
+                  {niveis && (
+                    <>
+                      <div className="mx-4 border-t border-border/60" />
+
+                      {/* Trading Signals */}
+                      <div className="px-4 py-3 bg-muted/10">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-mono mb-2.5">
+                          Sinais de Trading
+                        </p>
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                          <TradeCell
+                            label="Entrada"
+                            value={formatPrice(niveis.entrada)}
+                            sub={null}
+                            variant="neutral"
+                          />
+                          <TradeCell
+                            label="Stop Loss"
+                            value={formatPrice(niveis.stopLoss)}
+                            sub={`−${niveis.riscoPct}`}
+                            variant="danger"
+                          />
+                          <TradeCell
+                            label="TP1"
+                            value={formatPrice(niveis.tp1)}
+                            sub={`R/R ${niveis.rr1.toFixed(1)}x`}
+                            variant="success-low"
+                          />
+                          <TradeCell
+                            label="TP2"
+                            value={formatPrice(niveis.tp2)}
+                            sub={`+${(((niveis.tp2 - niveis.entrada) / niveis.entrada) * 100).toFixed(1)}%`}
+                            variant="success-mid"
+                          />
+                          <TradeCell
+                            label="TP3"
+                            value={formatPrice(niveis.tp3)}
+                            sub={`+${(((niveis.tp3 - niveis.entrada) / niveis.entrada) * 100).toFixed(1)}%`}
+                            variant="success-high"
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {analise.length > 0 && (
+                    <>
+                      <div className="mx-4 border-t border-border/60" />
+
+                      {/* Technical Analysis */}
+                      <div className="px-4 py-3 bg-muted/10">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-mono mb-2">
+                          Análise Técnica
+                        </p>
+                        <div className="bg-primary/5 border border-primary/10 rounded-lg p-3 space-y-1.5">
+                          {analise.map((linha, idx) => (
+                            // biome-ignore lint/suspicious/noArrayIndexKey: static order
+                            <div key={idx} className="flex items-start gap-2">
+                              <span className="text-primary/60 text-xs mt-0.5 shrink-0">
+                                •
+                              </span>
+                              <p className="text-xs text-muted-foreground leading-relaxed">
+                                {linha}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -151,6 +356,51 @@ export default function PotencialTab({ ativos, padroes }: Props) {
         );
       })}
     </motion.div>
+  );
+}
+
+type TradeVariant =
+  | "neutral"
+  | "danger"
+  | "success-low"
+  | "success-mid"
+  | "success-high";
+
+function TradeCell({
+  label,
+  value,
+  sub,
+  variant,
+}: {
+  label: string;
+  value: string;
+  sub: string | null;
+  variant: TradeVariant;
+}) {
+  const valueClass = {
+    neutral: "text-foreground",
+    danger: "text-destructive",
+    "success-low": "text-[oklch(0.60_0.18_145)]",
+    "success-mid": "text-[oklch(0.65_0.22_145)]",
+    "success-high": "text-[oklch(0.70_0.26_145)]",
+  }[variant];
+
+  return (
+    <div className="text-center">
+      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">
+        {label}
+      </p>
+      <p className={`text-sm font-mono font-bold mt-0.5 ${valueClass}`}>
+        {value}
+      </p>
+      {sub && (
+        <p
+          className={`text-[10px] font-mono mt-0.5 ${variant === "danger" ? "text-destructive/70" : "text-muted-foreground"}`}
+        >
+          {sub}
+        </p>
+      )}
+    </div>
   );
 }
 

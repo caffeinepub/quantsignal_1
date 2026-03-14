@@ -13,6 +13,7 @@ export interface BinanceKline {
   low: number;
   close: number;
   volume: number;
+  tradeCount: number;
 }
 
 export interface ComputedIndicators {
@@ -21,6 +22,11 @@ export interface ComputedIndicators {
   compressao: number;
   aceleracao: number;
   volume: number;
+}
+
+export interface MASignal {
+  maCross: boolean;
+  tradeAcceleration: number;
 }
 
 export async function fetchTickers(): Promise<BinanceTicker[]> {
@@ -43,7 +49,60 @@ export async function fetchKlines(symbol: string): Promise<BinanceKline[]> {
     low: Number.parseFloat(String(k[3])),
     close: Number.parseFloat(String(k[4])),
     volume: Number.parseFloat(String(k[5])),
+    tradeCount: Number(k[8]),
   }));
+}
+
+export async function fetchKlinesForTF(
+  symbol: string,
+  interval: string,
+  limit: number,
+): Promise<BinanceKline[]> {
+  const res = await fetch(
+    `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
+  );
+  if (!res.ok)
+    throw new Error(`Klines error for ${symbol}/${interval}: ${res.status}`);
+  const raw: unknown[][] = await res.json();
+  return raw.map((k) => ({
+    openTime: Number(k[0]),
+    open: Number.parseFloat(String(k[1])),
+    high: Number.parseFloat(String(k[2])),
+    low: Number.parseFloat(String(k[3])),
+    close: Number.parseFloat(String(k[4])),
+    volume: Number.parseFloat(String(k[5])),
+    tradeCount: Number(k[8]),
+  }));
+}
+
+export function computeMASignal(klines: BinanceKline[]): MASignal {
+  const closes = klines.map((k) => k.close);
+  const n = closes.length;
+
+  const ma20Slice = closes.slice(Math.max(0, n - 20));
+  const ma50Slice = closes.slice(Math.max(0, n - 50));
+  const ma180Slice = closes.slice(Math.max(0, n - 180));
+
+  const avg = (arr: number[]) =>
+    arr.length === 0 ? 0 : arr.reduce((a, b) => a + b, 0) / arr.length;
+
+  const ma20 = avg(ma20Slice);
+  const ma50 = avg(ma50Slice);
+  const ma180 = avg(ma180Slice);
+
+  const maCross = ma20 > ma180 && ma50 > ma180;
+
+  const tradeCounts = klines.map((k) => k.tradeCount);
+  const last5 = tradeCounts.slice(Math.max(0, tradeCounts.length - 5));
+  const prev20 = tradeCounts.slice(
+    Math.max(0, tradeCounts.length - 25),
+    Math.max(0, tradeCounts.length - 5),
+  );
+  const lastAvg = avg(last5);
+  const prevAvg = avg(prev20);
+  const tradeAcceleration = prevAvg === 0 ? 1.0 : lastAvg / prevAvg;
+
+  return { maCross, tradeAcceleration };
 }
 
 export function computeIndicators(klines: BinanceKline[]): ComputedIndicators {

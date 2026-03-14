@@ -4,7 +4,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Activity, BookOpen, RefreshCw, TrendingUp, Zap } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { Ativo, Padrao } from "./backend.d";
 import EmAltaTab from "./components/EmAltaTab";
@@ -12,7 +12,14 @@ import PadroesTab from "./components/PadroesTab";
 import PotencialTab from "./components/PotencialTab";
 import { useActor } from "./hooks/useActor";
 import { useGetAtivos, useGetPadroes } from "./hooks/useQueries";
-import { computeIndicators, fetchKlines, fetchTickers } from "./lib/binance";
+import {
+  type MASignal,
+  computeIndicators,
+  computeMASignal,
+  fetchKlines,
+  fetchKlinesForTF,
+  fetchTickers,
+} from "./lib/binance";
 
 const ALTA_THRESHOLD = 8;
 
@@ -26,6 +33,36 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [displayAtivos, setDisplayAtivos] = useState<Ativo[]>([]);
+  const [maCrossMap, setMaCrossMap] = useState<Record<string, number>>({});
+  const [nextRefreshIn, setNextRefreshIn] = useState<number | null>(null);
+
+  const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hasAutoStarted = useRef(false);
+
+  // Cleanup on unmount
+  useEffect(
+    () => () => {
+      if (autoRefreshRef.current) clearInterval(autoRefreshRef.current);
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    },
+    [],
+  );
+
+  const startCountdown = useCallback(() => {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    setNextRefreshIn(300);
+    let remaining = 300;
+    countdownRef.current = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        remaining = 300;
+        setNextRefreshIn(300);
+      } else {
+        setNextRefreshIn(remaining);
+      }
+    }, 1000);
+  }, []);
 
   const handleAtualizar = useCallback(async () => {
     if (!actor) {
@@ -122,6 +159,66 @@ export default function App() {
         }
       }
 
+      // --- MA Cross phase: top 20 by score ---
+      setLoadingMsg("Analisando cruzamentos de médias móveis (top 20)...");
+
+      const top20 = [...ativosParaSalvar]
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 20);
+      const top20Symbols = new Set(top20.map((a) => a.symbol));
+      const maSignalsMap: Record<
+        string,
+        { tf3m: MASignal; tf5m: MASignal; tf15m: MASignal }
+      > = {};
+      const top20Array = Array.from(top20Symbols);
+      const MA_BATCH = 5;
+
+      for (let i = 0; i < top20Array.length; i += MA_BATCH) {
+        const batch = top20Array.slice(i, i + MA_BATCH);
+        await Promise.allSettled(
+          batch.map(async (symbol) => {
+            const [k3m, k5m, k15m] = await Promise.all([
+              fetchKlinesForTF(symbol, "3m", 200),
+              fetchKlinesForTF(symbol, "5m", 200),
+              fetchKlinesForTF(symbol, "15m", 200),
+            ]);
+            maSignalsMap[symbol] = {
+              tf3m: computeMASignal(k3m),
+              tf5m: computeMASignal(k5m),
+              tf15m: computeMASignal(k15m),
+            };
+          }),
+        );
+        if (i + MA_BATCH < top20Array.length) {
+          await new Promise((res) => setTimeout(res, 300));
+        }
+      }
+
+      // Apply score bonuses
+      const maCrossCountMap: Record<string, number> = {};
+      for (const a of ativosParaSalvar) {
+        if (!top20Symbols.has(a.symbol)) continue;
+        const signals = maSignalsMap[a.symbol];
+        if (!signals) continue;
+        const crossCount = [signals.tf3m, signals.tf5m, signals.tf15m].filter(
+          (s) => s.maCross,
+        ).length;
+        maCrossCountMap[a.symbol] = crossCount;
+        let bonus = 0;
+        if (crossCount === 3) bonus += 20;
+        else if (crossCount === 2) bonus += 10;
+        else if (crossCount === 1) bonus += 5;
+        const tradeAccel = Math.max(
+          signals.tf3m.tradeAcceleration,
+          signals.tf5m.tradeAcceleration,
+          signals.tf15m.tradeAcceleration,
+        );
+        if (tradeAccel > 1.5) bonus += 10;
+        a.score = Math.min(a.score + bonus, 100);
+      }
+
+      setMaCrossMap(maCrossCountMap);
+
       setLoadingMsg("Salvando dados...");
 
       await actor.salvarAtivos(ativosParaSalvar);
@@ -141,6 +238,20 @@ export default function App() {
       toast.success(
         `Dados atualizados! ${ativosParaSalvar.filter((a) => a.variacao > ALTA_THRESHOLD).length} ativos em alta detectados.`,
       );
+
+      // Start auto-refresh after first successful load
+      if (!hasAutoStarted.current) {
+        hasAutoStarted.current = true;
+        autoRefreshRef.current = setInterval(
+          () => {
+            handleAtualizar();
+          },
+          5 * 60 * 1000,
+        );
+        startCountdown();
+      } else {
+        startCountdown();
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro desconhecido";
       setError(msg);
@@ -149,7 +260,7 @@ export default function App() {
       setIsLoading(false);
       setLoadingMsg("");
     }
-  }, [actor, refetchAtivos, refetchPadroes]);
+  }, [actor, refetchAtivos, refetchPadroes, startCountdown]);
 
   const ativos = displayAtivos.length > 0 ? displayAtivos : storedAtivos;
   const emAlta = ativos
@@ -181,6 +292,12 @@ export default function App() {
             {lastUpdated && (
               <span className="text-xs text-muted-foreground hidden sm:block">
                 Atualizado: {lastUpdated.toLocaleTimeString("pt-BR")}
+              </span>
+            )}
+            {nextRefreshIn !== null && (
+              <span className="text-xs text-muted-foreground hidden sm:block">
+                Próxima: {Math.floor(nextRefreshIn / 60)}:
+                {String(nextRefreshIn % 60).padStart(2, "0")}
               </span>
             )}
             <Button
@@ -304,7 +421,11 @@ export default function App() {
           </TabsContent>
 
           <TabsContent value="potencial">
-            <PotencialTab ativos={potencial} padroes={padroes} />
+            <PotencialTab
+              ativos={potencial}
+              padroes={padroes}
+              maCrossMap={maCrossMap}
+            />
           </TabsContent>
 
           <TabsContent value="padroes">
