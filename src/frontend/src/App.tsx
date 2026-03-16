@@ -14,8 +14,13 @@ import { useActor } from "./hooks/useActor";
 import { useGetAtivos, useGetPadroes } from "./hooks/useQueries";
 import {
   type MASignal,
+  type RadarSignal,
+  computeExpVsBtc,
   computeIndicators,
   computeMASignal,
+  computeRadarSignal,
+  fetchFuturesOIDirection,
+  fetchFuturesOIHist,
   fetchKlines,
   fetchKlinesForTF,
   fetchTickers,
@@ -34,6 +39,7 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [displayAtivos, setDisplayAtivos] = useState<Ativo[]>([]);
   const [maCrossMap, setMaCrossMap] = useState<Record<string, number>>({});
+  const [radarMap, setRadarMap] = useState<Record<string, RadarSignal>>({});
   const [nextRefreshIn, setNextRefreshIn] = useState<number | null>(null);
 
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -51,13 +57,13 @@ export default function App() {
 
   const startCountdown = useCallback(() => {
     if (countdownRef.current) clearInterval(countdownRef.current);
-    setNextRefreshIn(300);
-    let remaining = 300;
+    setNextRefreshIn(30);
+    let remaining = 30;
     countdownRef.current = setInterval(() => {
       remaining -= 1;
       if (remaining <= 0) {
-        remaining = 300;
-        setNextRefreshIn(300);
+        remaining = 30;
+        setNextRefreshIn(30);
       } else {
         setNextRefreshIn(remaining);
       }
@@ -225,6 +231,89 @@ export default function App() {
 
       setMaCrossMap(maCrossCountMap);
 
+      // --- Radar phase: evaluate assets that passed MA filter ---
+      setLoadingMsg("Avaliando sinais Radar...");
+
+      const passedAssets = ativosParaSalvar.filter(
+        (a) =>
+          top20Symbols.has(a.symbol) && (maCrossCountMap[a.symbol] ?? 0) > 0,
+      );
+
+      let btcKlines5m: ReturnType<typeof computeIndicators> extends never
+        ? never
+        : Awaited<ReturnType<typeof fetchKlinesForTF>> = [];
+      try {
+        btcKlines5m = await fetchKlinesForTF("BTCUSDT", "5m", 30);
+      } catch {
+        // ignore
+      }
+
+      const newRadarMap: Record<string, RadarSignal> = {};
+
+      if (passedAssets.length > 0) {
+        const RADAR_BATCH = 3;
+        for (let i = 0; i < passedAssets.length; i += RADAR_BATCH) {
+          const batch = passedAssets.slice(i, i + RADAR_BATCH);
+          await Promise.allSettled(
+            batch.map(async (asset) => {
+              try {
+                const [coinKlines5mResult, oiDirResult, lsrDataResult] =
+                  await Promise.allSettled([
+                    fetchKlinesForTF(asset.symbol, "5m", 30),
+                    fetchFuturesOIDirection(asset.symbol),
+                    fetchFuturesOIHist(asset.symbol),
+                  ]);
+
+                const coinK =
+                  coinKlines5mResult.status === "fulfilled"
+                    ? coinKlines5mResult.value
+                    : [];
+                const oiDirection =
+                  oiDirResult.status === "fulfilled" ? oiDirResult.value : null;
+                const lsrResult =
+                  lsrDataResult.status === "fulfilled"
+                    ? lsrDataResult.value
+                    : null;
+                const lsr = lsrResult
+                  ? lsrResult.longRate / (lsrResult.shortRate || 1)
+                  : null;
+
+                const expVsBtc =
+                  btcKlines5m.length > 0
+                    ? computeExpVsBtc(coinK, btcKlines5m)
+                    : 0;
+
+                const maSignal = maSignalsMap[asset.symbol];
+                const tradeHeat = maSignal
+                  ? maSignal.tf5m.tradeAcceleration
+                  : 1.0;
+                const volumeSpike = maSignal
+                  ? maSignal.tf5m.volumeSpike
+                  : false;
+
+                const radar = computeRadarSignal({
+                  symbol: asset.symbol,
+                  expVsBtc,
+                  oiDirection: oiDirection ?? "stable",
+                  lsr,
+                  tradeHeat,
+                  volumeSpike,
+                });
+
+                newRadarMap[asset.symbol] = radar;
+              } catch {
+                // skip
+              }
+            }),
+          );
+          if (i + RADAR_BATCH < passedAssets.length) {
+            await new Promise((res) => setTimeout(res, 200));
+          }
+        }
+      }
+
+      setRadarMap(newRadarMap);
+
       setLoadingMsg("Salvando dados...");
 
       await actor.salvarAtivos(ativosParaSalvar);
@@ -248,12 +337,9 @@ export default function App() {
       // Start auto-refresh after first successful load
       if (!hasAutoStarted.current) {
         hasAutoStarted.current = true;
-        autoRefreshRef.current = setInterval(
-          () => {
-            handleAtualizar();
-          },
-          5 * 60 * 1000,
-        );
+        autoRefreshRef.current = setInterval(() => {
+          handleAtualizar();
+        }, 30 * 1000);
         startCountdown();
       } else {
         startCountdown();
@@ -302,8 +388,7 @@ export default function App() {
             )}
             {nextRefreshIn !== null && (
               <span className="text-xs text-muted-foreground hidden sm:block">
-                Próxima: {Math.floor(nextRefreshIn / 60)}:
-                {String(nextRefreshIn % 60).padStart(2, "0")}
+                Próxima: {String(nextRefreshIn).padStart(2, "0")}s
               </span>
             )}
             <Button
@@ -431,6 +516,7 @@ export default function App() {
               ativos={potencial}
               padroes={padroes}
               maCrossMap={maCrossMap}
+              radarMap={radarMap}
             />
           </TabsContent>
 

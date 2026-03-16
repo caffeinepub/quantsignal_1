@@ -1,25 +1,30 @@
-# Collie Quantum — Filtro Eliminatório de MA
+# QuantSignal
 
 ## Current State
-A aba Potencial exibe os top 20 ativos por score. O cruzamento de MA20/MA50 acima de MA180 nos timeframes 3m, 5m e 15m é analisado apenas para esses top 20, e o resultado é aplicado como bônus no score (não é eliminatório). O timeframe de 1m não é analisado. A lógica atual não detecta se o descolamento está iniciando.
+- App has 3 tabs: Em Alta, Potencial, Padrões Históricos
+- Potencial tab shows top 20 assets filtered by MA20/MA50/MA180 eliminatory crossover (1m/3m/5m/15m weighted)
+- Cards expandidos mostram indicadores, sinais de trading e análise técnica
+- Auto-refresh a cada 5 minutos com countdown no header
 
 ## Requested Changes (Diff)
 
 ### Add
-- Timeframe 1m na análise (peso muito forte = 4)
-- Detecção de descolamento iniciando: MA20 e MA50 acima de MA180, com spread < 4% e crescendo
-- Detecção de injeção financeira: spike de volume recente
-- Score ponderado por timeframe: 1m=4, 3m=3, 5m=2, 15m=1 (máx 10)
+- Avaliação do sinal Radar (approve/manual_review/reject) calculada para cada ativo que passou o filtro MA, exibida nos cards da aba Potencial
+- Badge visual no card: verde (approve), amarelo (manual_review), vermelho (reject)
+- Seção expandida "Avaliação Radar" com: decisão, confidence, reason_short, pros, cons, risk_flags
+- Funções em binance.ts: fetchFuturesOIHist, fetchFuturesLSR, fetchFuturesKlines, computeRadarSignal
+- BTC return calculado uma vez por ciclo e reutilizado para todos os ativos
 
 ### Modify
-- computeMASignal em binance.ts: retornar descolamento, volumeSpike e weightedScore
-- App.tsx: buscar 1m klines, filtro eliminatório (weightedScore > 0), remover bônus de score
-- PotencialTab.tsx: badge MA mostrando score ponderado
+- Intervalo de auto-refresh: 5 minutos → 30 segundos
+- Countdown no header: 300s → 30s
+- PotencialTab: aceitar radarMap prop e exibir avaliação nos cards
+- App.tsx: após fase MA, fase adicional de Radar fetch para ativos que passaram o filtro
 
 ### Remove
-- Lógica de bônus de score por crossCount
+- Nada removido
 
 ## Implementation Plan
-1. Atualizar computeMASignal em binance.ts
-2. Atualizar App.tsx com fetch 1m e filtro eliminatório
-3. Atualizar PotencialTab.tsx com badge atualizado
+1. binance.ts: adicionar fetchFuturesOIHist, fetchFuturesLSR, computeRadarSignal (EXP simplificado via retorno relativo vs BTC)
+2. App.tsx: mudar intervalo para 30s, adicionar fase Radar após MA, passar radarMap para PotencialTab
+3. PotencialTab.tsx: aceitar RadarSignal map, exibir badge de decisão no header do card e seção detalhada expandida

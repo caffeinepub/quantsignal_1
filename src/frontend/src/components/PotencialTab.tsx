@@ -3,11 +3,13 @@ import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 import type { Ativo, Padrao } from "../backend.d";
+import type { RadarSignal } from "../lib/binance";
 
 interface Props {
   ativos: Ativo[];
   padroes: Padrao[];
   maCrossMap: Record<string, number>;
+  radarMap: Record<string, RadarSignal>;
 }
 
 function clamp(val: number, min: number, max: number): number {
@@ -55,7 +57,6 @@ function gerarAnalise(
   const { compressao, aceleracao, distMediaMovel, volatilidade } = padrao;
   const linhas: string[] = [];
 
-  // MA weighted score signal
   if (maCrossCount !== undefined && maCrossCount >= 7) {
     linhas.push(
       "Cruzamento MA forte nos principais timeframes — sinal de entrada de alta qualidade.",
@@ -123,7 +124,12 @@ function gerarAnalise(
   return linhas;
 }
 
-export default function PotencialTab({ ativos, padroes, maCrossMap }: Props) {
+export default function PotencialTab({
+  ativos,
+  padroes,
+  maCrossMap,
+  radarMap,
+}: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   if (ativos.length === 0) {
@@ -171,6 +177,7 @@ export default function PotencialTab({ ativos, padroes, maCrossMap }: Props) {
         const analise = padrao
           ? gerarAnalise(padrao, a.score, maCrossCount)
           : [];
+        const radar = radarMap[a.symbol];
 
         return (
           <motion.div
@@ -193,7 +200,7 @@ export default function PotencialTab({ ativos, padroes, maCrossMap }: Props) {
               </span>
 
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1.5">
+                <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                   <span className="font-mono font-semibold text-sm text-foreground">
                     {a.symbol.replace("USDT", "")}
                     <span className="text-muted-foreground/50 text-xs">
@@ -213,6 +220,23 @@ export default function PotencialTab({ ativos, padroes, maCrossMap }: Props) {
                   {maCrossCount !== undefined && maCrossCount > 0 && (
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-primary/15 text-primary border border-primary/25">
                       MA {maCrossCount}/10
+                    </span>
+                  )}
+                  {radar && (
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                        radar.decision === "approve"
+                          ? "bg-[oklch(0.65_0.22_145)]/15 text-[oklch(0.65_0.22_145)] border-[oklch(0.65_0.22_145)]/25"
+                          : radar.decision === "manual_review"
+                            ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/25"
+                            : "bg-destructive/15 text-destructive border-destructive/25"
+                      }`}
+                    >
+                      {radar.decision === "approve"
+                        ? "✓ Radar"
+                        : radar.decision === "manual_review"
+                          ? "~ Radar"
+                          : "✗ Radar"}
                     </span>
                   )}
                 </div>
@@ -345,6 +369,96 @@ export default function PotencialTab({ ativos, padroes, maCrossMap }: Props) {
                               </p>
                             </div>
                           ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {radar && (
+                    <>
+                      <div className="mx-4 border-t border-border/60" />
+                      <div className="px-4 py-3 bg-muted/10">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-mono mb-2.5">
+                          Avaliação Radar
+                        </p>
+                        <div
+                          className={`rounded-lg border p-3 ${
+                            radar.decision === "approve"
+                              ? "bg-[oklch(0.65_0.22_145)]/5 border-[oklch(0.65_0.22_145)]/20"
+                              : radar.decision === "manual_review"
+                                ? "bg-yellow-500/5 border-yellow-500/20"
+                                : "bg-destructive/5 border-destructive/20"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span
+                              className={`text-xs font-mono font-bold ${
+                                radar.decision === "approve"
+                                  ? "text-[oklch(0.65_0.22_145)]"
+                                  : radar.decision === "manual_review"
+                                    ? "text-yellow-400"
+                                    : "text-destructive"
+                              }`}
+                            >
+                              {radar.decision === "approve"
+                                ? "✓ APROVADO"
+                                : radar.decision === "manual_review"
+                                  ? "~ REVISÃO MANUAL"
+                                  : "✗ REJEITADO"}
+                            </span>
+                            <span className="text-[10px] font-mono text-muted-foreground">
+                              Confiança: {radar.confidence.toFixed(1)}/10
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mb-2">
+                            {radar.reason_short}
+                          </p>
+                          {radar.pros.length > 0 && (
+                            <div className="mb-1.5">
+                              {radar.pros.map((p) => (
+                                <div
+                                  key={p}
+                                  className="flex items-start gap-1.5"
+                                >
+                                  <span className="text-[oklch(0.65_0.22_145)] text-[10px] mt-0.5">
+                                    +
+                                  </span>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    {p}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {radar.cons.length > 0 && (
+                            <div className="mb-1.5">
+                              {radar.cons.map((c) => (
+                                <div
+                                  key={c}
+                                  className="flex items-start gap-1.5"
+                                >
+                                  <span className="text-destructive text-[10px] mt-0.5">
+                                    −
+                                  </span>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    {c}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {radar.risk_flags.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {radar.risk_flags.map((f) => (
+                                <span
+                                  key={f}
+                                  className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-destructive/10 text-destructive border border-destructive/20"
+                                >
+                                  ⚠ {f}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </>

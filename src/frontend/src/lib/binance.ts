@@ -32,6 +32,19 @@ export interface MASignal {
   tfWeight: number;
 }
 
+export interface RadarSignal {
+  decision: "approve" | "manual_review" | "reject";
+  confidence: number;
+  reason_short: string;
+  pros: string[];
+  cons: string[];
+  risk_flags: string[];
+  expVsBtc: number;
+  lsr: number;
+  oiDirection: "up" | "down" | "stable";
+  tradeHeat: number;
+}
+
 export async function fetchTickers(): Promise<BinanceTicker[]> {
   const res = await fetch("https://api.binance.com/api/v3/ticker/24hr");
   if (!res.ok) throw new Error(`Binance API error: ${res.status}`);
@@ -76,6 +89,157 @@ export async function fetchKlinesForTF(
     volume: Number.parseFloat(String(k[5])),
     tradeCount: Number(k[8]),
   }));
+}
+
+export async function fetchFuturesOIHist(
+  symbol: string,
+): Promise<{ longRate: number; shortRate: number } | null> {
+  try {
+    const res = await fetch(
+      `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=5m&limit=2`,
+    );
+    if (!res.ok) return null;
+    const data: { longAccount: string; shortAccount: string }[] =
+      await res.json();
+    if (!data || data.length === 0) return null;
+    return {
+      longRate: Number(data[0].longAccount),
+      shortRate: Number(data[0].shortAccount),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchFuturesOIDirection(
+  symbol: string,
+): Promise<"up" | "down" | "stable" | null> {
+  try {
+    const res = await fetch(
+      `https://fapi.binance.com/futures/data/openInterestHist?symbol=${symbol}&period=5m&limit=3`,
+    );
+    if (!res.ok) return null;
+    const data: { sumOpenInterest: string }[] = await res.json();
+    if (!data || data.length < 2) return null;
+    const first = Number(data[0].sumOpenInterest);
+    const last = Number(data[data.length - 1].sumOpenInterest);
+    if (last > first * 1.02) return "up";
+    if (last < first * 0.98) return "down";
+    return "stable";
+  } catch {
+    return null;
+  }
+}
+
+export function computeExpVsBtc(
+  coinKlines: BinanceKline[],
+  btcKlines: BinanceKline[],
+): number {
+  const ret = (klines: BinanceKline[]) => {
+    const sliced = klines.slice(-10);
+    if (sliced.length < 2) return 0;
+    return (
+      ((sliced[sliced.length - 1].close - sliced[0].close) / sliced[0].close) *
+      100
+    );
+  };
+  return ret(coinKlines) - ret(btcKlines);
+}
+
+export function computeRadarSignal(params: {
+  symbol: string;
+  expVsBtc: number;
+  oiDirection: "up" | "down" | "stable" | null;
+  lsr: number | null;
+  tradeHeat: number;
+  volumeSpike: boolean;
+}): RadarSignal {
+  const { expVsBtc, oiDirection, lsr, tradeHeat, volumeSpike } = params;
+
+  const pros: string[] = [];
+  const cons: string[] = [];
+  const risk_flags: string[] = [];
+
+  // pros
+  if (expVsBtc > 3) {
+    pros.push("Força relativa forte vs BTC — liderança clara");
+  } else if (expVsBtc > 1) {
+    pros.push("Força relativa positiva vs BTC");
+  }
+  if (oiDirection === "up") pros.push("OI em crescimento — entrada de capital");
+  if (lsr !== null && lsr < 1.0)
+    pros.push("LSR favorável — potencial de short squeeze");
+  else if (lsr !== null && lsr < 1.5) pros.push("LSR saudável para long");
+  if (tradeHeat > 1.3) pros.push("Atividade de trades acima da média");
+  if (volumeSpike) pros.push("Spike de volume detectado");
+
+  // cons
+  if (expVsBtc < -1) cons.push("Fraqueza relativa vs BTC");
+  if (oiDirection === "down") cons.push("OI caindo — saída de capital");
+  if (lsr !== null && lsr > 3.0)
+    cons.push("LSR extremo — sinal tardio ou manipulado");
+  else if (lsr !== null && lsr > 2.0)
+    cons.push("LSR elevado — risco de crowding");
+  if (tradeHeat < 0.8) cons.push("Atividade de trades abaixo da média");
+
+  // risk_flags
+  if (lsr !== null && lsr > 2.5) risk_flags.push("Crowding");
+  if (tradeHeat < 0.6) risk_flags.push("Baixa liquidez");
+  if (oiDirection === "down" && expVsBtc < 0) risk_flags.push("Fluxo saindo");
+
+  // decision
+  let decision: "approve" | "manual_review" | "reject";
+  if (
+    (lsr !== null && lsr > 2.5) ||
+    expVsBtc < -3 ||
+    (oiDirection === "down" && expVsBtc < -1 && tradeHeat < 0.8)
+  ) {
+    decision = "reject";
+  } else if (
+    expVsBtc > 0 &&
+    (lsr === null || lsr < 1.8) &&
+    oiDirection !== "down" &&
+    tradeHeat >= 1.0 &&
+    pros.length >= 2
+  ) {
+    decision = "approve";
+  } else {
+    decision = "manual_review";
+  }
+
+  // confidence
+  let confidence: number;
+  if (decision === "approve") {
+    confidence = Math.min(10, 5 + pros.length);
+  } else if (decision === "manual_review") {
+    confidence = 5;
+  } else {
+    confidence = Math.max(1, 4 - risk_flags.length);
+  }
+
+  // reason_short
+  let reason_short: string;
+  if (decision === "approve") {
+    reason_short = "Contexto forte e coerente";
+  } else if (decision === "manual_review") {
+    reason_short = "Sinais mistos — revisar contexto";
+  } else {
+    reason_short =
+      risk_flags.length > 0 ? risk_flags[0] : "Sinal fraco ou tardio";
+  }
+
+  return {
+    decision,
+    confidence,
+    reason_short,
+    pros,
+    cons,
+    risk_flags,
+    expVsBtc,
+    lsr: lsr ?? 0,
+    oiDirection: oiDirection ?? "stable",
+    tradeHeat,
+  };
 }
 
 export function computeMASignal(
