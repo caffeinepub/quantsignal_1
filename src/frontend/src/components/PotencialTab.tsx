@@ -55,18 +55,18 @@ function gerarAnalise(
   const { compressao, aceleracao, distMediaMovel, volatilidade } = padrao;
   const linhas: string[] = [];
 
-  // MA Cross signal
-  if (maCrossCount === 3) {
+  // MA weighted score signal
+  if (maCrossCount !== undefined && maCrossCount >= 7) {
     linhas.push(
-      "Cruzamento MA20/MA50 acima de MA180 em todos os timeframes — sinal de entrada forte.",
+      "Cruzamento MA forte nos principais timeframes — sinal de entrada de alta qualidade.",
     );
-  } else if (maCrossCount === 2) {
+  } else if (maCrossCount !== undefined && maCrossCount >= 4) {
     linhas.push(
-      "Cruzamento parcial das médias móveis — tendência se formando, aguardar confirmação.",
+      "Cruzamento MA confirmado em múltiplos timeframes — tendência se formando.",
     );
-  } else if (maCrossCount === 1) {
+  } else if (maCrossCount !== undefined && maCrossCount >= 1) {
     linhas.push(
-      "Início de cruzamento detectado — observar alinhamento completo.",
+      "Início de cruzamento detectado — aguardar confirmação em timeframes maiores.",
     );
   }
 
@@ -212,7 +212,7 @@ export default function PotencialTab({ ativos, padroes, maCrossMap }: Props) {
                   </span>
                   {maCrossCount !== undefined && maCrossCount > 0 && (
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-primary/15 text-primary border border-primary/25">
-                      MA {maCrossCount}/3
+                      MA {maCrossCount}/10
                     </span>
                   )}
                 </div>
@@ -273,7 +273,7 @@ export default function PotencialTab({ ativos, padroes, maCrossMap }: Props) {
                       label="MA Cross"
                       value={
                         maCrossCount !== undefined
-                          ? `${maCrossCount}/3 TFs`
+                          ? `${maCrossCount}/10 pts`
                           : "—"
                       }
                     />

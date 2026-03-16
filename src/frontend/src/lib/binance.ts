@@ -27,6 +27,9 @@ export interface ComputedIndicators {
 export interface MASignal {
   maCross: boolean;
   tradeAcceleration: number;
+  descolamento: boolean;
+  volumeSpike: boolean;
+  tfWeight: number;
 }
 
 export async function fetchTickers(): Promise<BinanceTicker[]> {
@@ -75,23 +78,41 @@ export async function fetchKlinesForTF(
   }));
 }
 
-export function computeMASignal(klines: BinanceKline[]): MASignal {
+export function computeMASignal(
+  klines: BinanceKline[],
+  tfWeight = 1,
+): MASignal {
   const closes = klines.map((k) => k.close);
   const n = closes.length;
-
-  const ma20Slice = closes.slice(Math.max(0, n - 20));
-  const ma50Slice = closes.slice(Math.max(0, n - 50));
-  const ma180Slice = closes.slice(Math.max(0, n - 180));
 
   const avg = (arr: number[]) =>
     arr.length === 0 ? 0 : arr.reduce((a, b) => a + b, 0) / arr.length;
 
-  const ma20 = avg(ma20Slice);
-  const ma50 = avg(ma50Slice);
-  const ma180 = avg(ma180Slice);
+  const ma20 = avg(closes.slice(Math.max(0, n - 20)));
+  const ma50 = avg(closes.slice(Math.max(0, n - 50)));
+  const ma180 = avg(closes.slice(Math.max(0, n - 180)));
 
   const maCross = ma20 > ma180 && ma50 > ma180;
 
+  // descolamento: crossover is recent — spread < 5% of MA180
+  const descolamento =
+    maCross &&
+    ma180 > 0 &&
+    (ma20 - ma180) / ma180 < 0.05 &&
+    (ma50 - ma180) / ma180 < 0.05;
+
+  // volumeSpike: last 5 candles avg vs previous 20
+  const volumes = klines.map((k) => k.volume);
+  const last5Vol = avg(volumes.slice(Math.max(0, volumes.length - 5)));
+  const prev20Vol = avg(
+    volumes.slice(
+      Math.max(0, volumes.length - 25),
+      Math.max(0, volumes.length - 5),
+    ),
+  );
+  const volumeSpike = prev20Vol > 0 && last5Vol > prev20Vol * 1.5;
+
+  // tradeAcceleration
   const tradeCounts = klines.map((k) => k.tradeCount);
   const last5 = tradeCounts.slice(Math.max(0, tradeCounts.length - 5));
   const prev20 = tradeCounts.slice(
@@ -102,7 +123,7 @@ export function computeMASignal(klines: BinanceKline[]): MASignal {
   const prevAvg = avg(prev20);
   const tradeAcceleration = prevAvg === 0 ? 1.0 : lastAvg / prevAvg;
 
-  return { maCross, tradeAcceleration };
+  return { maCross, tradeAcceleration, descolamento, volumeSpike, tfWeight };
 }
 
 export function computeIndicators(klines: BinanceKline[]): ComputedIndicators {

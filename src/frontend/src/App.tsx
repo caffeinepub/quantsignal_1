@@ -160,7 +160,9 @@ export default function App() {
       }
 
       // --- MA Cross phase: top 20 by score ---
-      setLoadingMsg("Analisando cruzamentos de médias móveis (top 20)...");
+      setLoadingMsg(
+        "Analisando cruzamentos de médias móveis (top 20) — 1m, 3m, 5m, 15m...",
+      );
 
       const top20 = [...ativosParaSalvar]
         .sort((a, b) => b.score - a.score)
@@ -168,7 +170,7 @@ export default function App() {
       const top20Symbols = new Set(top20.map((a) => a.symbol));
       const maSignalsMap: Record<
         string,
-        { tf3m: MASignal; tf5m: MASignal; tf15m: MASignal }
+        { tf1m: MASignal; tf3m: MASignal; tf5m: MASignal; tf15m: MASignal }
       > = {};
       const top20Array = Array.from(top20Symbols);
       const MA_BATCH = 5;
@@ -177,15 +179,17 @@ export default function App() {
         const batch = top20Array.slice(i, i + MA_BATCH);
         await Promise.allSettled(
           batch.map(async (symbol) => {
-            const [k3m, k5m, k15m] = await Promise.all([
+            const [k1m, k3m, k5m, k15m] = await Promise.all([
+              fetchKlinesForTF(symbol, "1m", 200),
               fetchKlinesForTF(symbol, "3m", 200),
               fetchKlinesForTF(symbol, "5m", 200),
               fetchKlinesForTF(symbol, "15m", 200),
             ]);
             maSignalsMap[symbol] = {
-              tf3m: computeMASignal(k3m),
-              tf5m: computeMASignal(k5m),
-              tf15m: computeMASignal(k15m),
+              tf1m: computeMASignal(k1m, 4),
+              tf3m: computeMASignal(k3m, 3),
+              tf5m: computeMASignal(k5m, 2),
+              tf15m: computeMASignal(k15m, 1),
             };
           }),
         );
@@ -194,27 +198,29 @@ export default function App() {
         }
       }
 
-      // Apply score bonuses
+      // Apply eliminatory MA filter: compute weighted score, zero out assets that don't pass
       const maCrossCountMap: Record<string, number> = {};
       for (const a of ativosParaSalvar) {
         if (!top20Symbols.has(a.symbol)) continue;
         const signals = maSignalsMap[a.symbol];
         if (!signals) continue;
-        const crossCount = [signals.tf3m, signals.tf5m, signals.tf15m].filter(
-          (s) => s.maCross,
-        ).length;
-        maCrossCountMap[a.symbol] = crossCount;
-        let bonus = 0;
-        if (crossCount === 3) bonus += 20;
-        else if (crossCount === 2) bonus += 10;
-        else if (crossCount === 1) bonus += 5;
-        const tradeAccel = Math.max(
-          signals.tf3m.tradeAcceleration,
-          signals.tf5m.tradeAcceleration,
-          signals.tf15m.tradeAcceleration,
+
+        const tfSignals = [
+          signals.tf1m,
+          signals.tf3m,
+          signals.tf5m,
+          signals.tf15m,
+        ];
+        const weightedScore = tfSignals.reduce(
+          (sum, s) => sum + (s.descolamento ? s.tfWeight : 0),
+          0,
         );
-        if (tradeAccel > 1.5) bonus += 10;
-        a.score = Math.min(a.score + bonus, 100);
+        maCrossCountMap[a.symbol] = weightedScore;
+
+        // Eliminatory filter: zero out score if no descolamento detected
+        if (weightedScore === 0) {
+          a.score = 0;
+        }
       }
 
       setMaCrossMap(maCrossCountMap);
